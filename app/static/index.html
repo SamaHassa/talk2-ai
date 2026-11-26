@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Talk2 Ai</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d1d1f; --muted:#6b6b70; --accent:#c2410c; --ok:#15803d; --line:#e5e5e2; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width:1000px; margin:0 auto; padding:16px; display:grid; gap:16px; grid-template-columns: 3fr 2fr; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  header { max-width:1000px; margin:0 auto; padding:16px 16px 0; display:flex; justify-content:space-between; align-items:baseline; }
+  h1 { font-size:20px; margin:0; }
+  .level { font-weight:600; color:var(--accent); }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  #log { height:60vh; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
+  .msg { padding:8px 12px; border-radius:10px; max-width:85%; white-space:pre-wrap; }
+  .user { align-self:flex-end; background:#fde7d9; }
+  .tutor { align-self:flex-start; background:#eef0f3; }
+  form { display:flex; gap:8px; margin-top:12px; }
+  input { flex:1; padding:10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  button:disabled { opacity:.5; }
+  h2 { font-size:15px; margin:0 0 8px; }
+  .fix { border-top:1px solid var(--line); padding:8px 0; font-size:14px; }
+  .fix del { color:var(--accent); } .fix ins { color:var(--ok); text-decoration:none; font-weight:600; }
+  .muted { color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<header><h1>Talk2 Ai · Spanish tutor</h1><div>Your level: <span class="level" id="level">?</span></div></header>
+<main>
+  <section>
+    <div id="log"><div class="msg tutor">¡Hola! Soy Sofía. ¿Cómo te llamas? (Hi! I'm Sofía. What's your name?)</div></div>
+    <form id="f"><input id="m" placeholder="Escribe en español…" autocomplete="off" autofocus><button id="b">Send</button></form>
+  </section>
+  <section id="feedback"><h2>Feedback</h2><p class="muted">Corrections for your last message will appear here.</p></section>
+</main>
+<script>
+const sessionId = crypto.randomUUID();
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function bubble(cls, text) { const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text; $('log').append(d); $('log').scrollTop = 1e9; return d; }
+
+function showFeedback({ analysis: a, session_level }) {
+  $('level').textContent = session_level || '?';
+  const fixes = a.corrections.map(c => `<div class="fix"><del>${esc(c.original)}</del> → <ins>${esc(c.corrected)}</ins><br><span class="muted">${esc(c.category.replaceAll('_',' '))}: ${esc(c.explanation)}</span></div>`).join('');
+  $('feedback').innerHTML = `<h2>Feedback</h2>
+    <p>${esc(a.encouragement)}</p>
+    ${fixes || '<p class="muted">No mistakes found. ¡Muy bien!</p>'}
+    <div class="fix"><b>Natural version:</b> ${esc(a.corrected_message)}</div>
+    <div class="fix muted">This message: ${a.level.cefr} (confidence ${Math.round(a.level.confidence*100)}%). ${esc(a.level.reasoning)}</div>`;
+}
+
+$('f').onsubmit = async (e) => {
+  e.preventDefault();
+  const message = $('m').value.trim(); if (!message) return;
+  $('m').value = ''; $('b').disabled = true; bubble('user', message);
+  const out = bubble('tutor', '');
+  const res = await fetch('/chat/stream', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ session_id: sessionId, message }) });
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read(); if (done) break;
+    buf += value; const events = buf.split('\n\n'); buf = events.pop();
+    for (const ev of events) {
+      const type = ev.match(/^event: (.*)$/m)?.[1]; const data = JSON.parse(ev.match(/^data: (.*)$/m)?.[1] ?? 'null');
+      if (type === 'token') { out.textContent += data; $('log').scrollTop = 1e9; }
+      else if (type === 'analysis') showFeedback(data);
+      else if (type === 'error') bubble('tutor', '⚠ ' + data);
+    }
+  }
+  $('b').disabled = false; $('m').focus();
+};
+</script>
+</body>
+</html>
